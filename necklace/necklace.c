@@ -12,19 +12,21 @@
 #define CLK 10
 #define DAT 11
 
-#define SW_L 5 // intermitant
+#define SW_L 5  // working
 #define SW_R 27 // working
 
 #define NUM_LEDS 12
-#define MIN 10
-#define MAX 50
+#define MIN 30
+#define MAX 220
 
 typedef struct {
-    uint8_t red;      // 8 bits for red color
-    uint8_t green;    // 8 bits for green color
-    uint8_t blue;     // 8 bits for blue color
     uint8_t brightness; // 8 bits for brightness
+    uint8_t red;      // 8 bits for red color
+    uint8_t blue;     // 8 bits for blue color
+    uint8_t green;    // 8 bits for green color
 } LED;
+
+LED LEDS[NUM_LEDS]; // extra 2 for the start and end frame
 
 void configure_io()
 {
@@ -82,27 +84,37 @@ void configure_io()
     while (reg_mprj_xfer == 1);
 }
 
-#define BIT_LENGTH 1
-void wait(int w) { for (int j=0; j<w; ++j); }
-void send_byte(uint8_t value)
+// takes 12ms to do a chain of 12 LEDs executing out of RAM
+// clock period = 23us
+void update_chain()
 {
+    const unsigned char *bytePtr = &LEDS;
     bool bit;
-    for(int i = 0; i < 8; i ++)
+    int i, j;
+    // start frame all 0s
+    for(j = 0; j < 32; j ++)
     {
-        bit = value & (1 << 7-i);
-        reg_mprj_datal = (bit << DAT) + (1 << CLK);
+        reg_mprj_datal = (0 << DAT) + (1 << CLK);
+        reg_mprj_datal = (0 << DAT);
+    }
 
-        reg_mprj_datal = (bit << DAT); 
+    for(i = 0; i < (NUM_LEDS)*4; i ++)
+    {
+        for(j = 0; j < 8; j ++)
+        {
+            bit = bytePtr[i] & (1 << 7-j);
+            reg_mprj_datal = (bit << DAT) + (1 << CLK);
+            reg_mprj_datal = (bit << DAT);
+        }
+    }
+
+    // end frame all 1s
+    for(j = 0; j < 32; j ++)
+    {
+        reg_mprj_datal = (1 << DAT) + (1 << CLK);
+        reg_mprj_datal = (1 << DAT);
     }
 }
-void send_frame(LED led)
-{
-    send_byte(led.brightness);
-    send_byte(led.red);
-    send_byte(led.blue);
-    send_byte(led.green);
-}
-
 
 void main()
 {
@@ -113,57 +125,41 @@ void main()
 
     configure_io();
 
-    int w = 25000;
-    for (int i=0; i<4; ++i) {
+    // program the chain
+    for(int i = 0; i < NUM_LEDS; i ++)
+    {
+        LEDS[i].red = 0;
+        LEDS[i].green = MIN;
+        LEDS[i].blue = 0;
+        LEDS[i].brightness = 255;
     }
 
+    // setup running update_chain from ram
+    uint16_t func[&main - &update_chain];
+    uint16_t *src_ptr;
+    uint16_t *dst_ptr;
 
-    LED myLED = {0, 120, 00, 255};
-    LED startLED = {0, 0, 0, 0};
-    LED endLED = {255, 255, 255, 255};
+    src_ptr = &update_chain;
+    dst_ptr = func;
+    while (src_ptr != &main)
+        *(dst_ptr++) = *(src_ptr++);
     
+    int i = 0;
+    int step = 1;
     while(true)
     {
-        /* button test stuff
-        myLED.red = ((reg_mprj_datal >> SW_L ) & 1) ? 0 : 50;
-        myLED.blue = ((reg_mprj_datal >> SW_R ) & 1) ? 0 : 50;
-            myLED.green = 0;
-            send_frame(startLED);
-            send_frame(myLED);
-            send_frame(endLED);
-        */
+        // run update_chain from ram
+        ((void(*)())func)();
+        // animation
+        for(i = 0; i < NUM_LEDS; i ++)
+            LEDS[i].green += step;
 
-        int i, j;
-        /*
-        for(i = MIN; i < MAX; i ++)
-        {
-            reg_gpio_out = ! reg_gpio_out;
-            myLED.green = i;
-            send_frame(startLED);
-            
-            for(j = 0; j < NUM_LEDS; j ++)
-                send_frame(myLED);
+        if(LEDS[0].green > MAX)
+            step = -1;
+        if(LEDS[0].green < MIN)
+            step = +1;
 
-            send_frame(endLED);
-        }
-        for(i = MAX; i > MIN; i --)
-        {
-            reg_gpio_out = ! reg_gpio_out;
-            myLED.green = i;
-            send_frame(startLED);
+//        reg_gpio_out = step == -1 ? 1 : 0 ; //! reg_gpio_out; 
 
-            for(j = 0; j < NUM_LEDS; j ++)
-                send_frame(myLED);
-
-            send_frame(endLED);
-        }
-        */
-            send_frame(startLED);
-            
-            for(j = 0; j < NUM_LEDS; j ++)
-                send_frame(myLED);
-
-            send_frame(endLED);
-    
     }
 }
