@@ -1,0 +1,2 @@
+PATTERN = necklace
+include ../Makefile
