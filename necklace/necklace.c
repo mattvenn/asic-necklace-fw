@@ -184,6 +184,8 @@ void main()
             if(mode == 4)
                 mode = 0;
         }
+        // little bit of feedback
+        reg_gpio_out = (sw_r || sw_l);
 
         // handle the different modes
         switch(mode) {
@@ -230,6 +232,5 @@ void main()
 
         }
 
-        //reg_gpio_out = ! reg_gpio_out; 
     }
 }
