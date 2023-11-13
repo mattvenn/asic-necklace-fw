@@ -1,0 +1,80 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup RiscV toolchain
+        # Locked the commit-id of the version as this is a 3rd party action
+        # tag gregdavill/setup-riscv-gnu-toolchain#v2 is a707fbefff8a80dc19007cd4bd3eb74ccbf76542 on 11-Nov-2023
+        uses: gregdavill/setup-riscv-gnu-toolchain@a707fbefff8a80dc19007cd4bd3eb74ccbf76542
+        #with:
+        #  version: 11.3.0-1
+
+      - name: Setup PATH
+        shell: bash
+        run: |
+          echo "=== $RUNNER_TEMP/.setup-riscv-gnu-toolchain/bin:"
+          ls -la $RUNNER_TEMP/.setup-riscv-gnu-toolchain/bin
+
+          echo "=== $RUNNER_TEMP/.setup-riscv-gnu-toolchain/riscv-none-elf/bin:"
+          ls -la $RUNNER_TEMP/.setup-riscv-gnu-toolchain/riscv-none-elf/bin
+
+          echo "${RUNNER_TEMP}/.setup-riscv-gnu-toolchain/bin" >> $GITHUB_PATH
+
+      - name: Summary
+        shell: bash
+        run: |
+          TOOLCHAIN_PREFIX="riscv-none-elf-"
+
+          ${TOOLCHAIN_PREFIX}ld -v
+          ${TOOLCHAIN_PREFIX}gcc -v
+          ${TOOLCHAIN_PREFIX}as -v </dev/null
+
+          ${TOOLCHAIN_PREFIX}gcc -dumpspecs
+
+          ${TOOLCHAIN_PREFIX}gcc -dumpspecs 2>/dev/null | grep -i -E "^march" | grep -i    -E "_zicsr"
+          ${TOOLCHAIN_PREFIX}gcc -dumpspecs 2>/dev/null | grep -i -E "^march" | grep -i -c -E "_zicsr"
+
+          version_gcc=$(${TOOLCHAIN_PREFIX}gcc --version | head -n1)
+          version_as=$( ${TOOLCHAIN_PREFIX}as  -v </dev/null 2>&1 >/dev/null | head -n1)
+          version_ld=$( ${TOOLCHAIN_PREFIX}ld  --version | head -n1)
+        
+          cat <<EOF >/tmp/GITHUB_STEP_SUMMARY$$.txt
+          | Package  | Version        |
+          | -------- | -------------- |
+          | binutils | ${version_ld}  |
+          | gcc      | ${version_gcc} |
+          | as       | ${version_as}  |
+          EOF
+
+          cat /tmp/GITHUB_STEP_SUMMARY$$.txt
+          cat /tmp/GITHUB_STEP_SUMMARY$$.txt >> $GITHUB_STEP_SUMMARY
+
+      - name: Build
+        shell: bash
+        run: |
+          export TOOLCHAIN_PATH=""
+          export TOOLCHAIN_PREFIX="riscv-none-elf-"
+        
+          make
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v3
+        with:
+          name: firmware
+          path: |
+            **/*.bin
+            **/*.elf
+            **/*.hex
+            **/*.lst
+
