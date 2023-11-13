@@ -28,6 +28,9 @@ typedef struct {
 
 LED LEDS[NUM_LEDS]; // extra 2 for the start and end frame
 
+// switch globals
+bool old_sw_l, old_sw_r, sw_l, sw_r = 0;
+
 void configure_io()
 {
 
@@ -46,7 +49,7 @@ void configure_io()
     reg_mprj_io_2 = GPIO_MODE_MGMT_STD_INPUT_NOPULL;
     reg_mprj_io_3 = GPIO_MODE_MGMT_STD_INPUT_NOPULL;
     reg_mprj_io_4 = GPIO_MODE_MGMT_STD_INPUT_NOPULL;
-    reg_mprj_io_5 = GPIO_MODE_MGMT_STD_INPUT_NOPULL; // switch
+    reg_mprj_io_5 = GPIO_MODE_MGMT_STD_INPUT_NOPULL; // l switch
 
     reg_mprj_io_8  = GPIO_MODE_MGMT_STD_INPUT_NOPULL;
     reg_mprj_io_9  = GPIO_MODE_MGMT_STD_INPUT_NOPULL;
@@ -84,6 +87,17 @@ void configure_io()
     while (reg_mprj_xfer == 1);
 }
 
+
+void check_switches()
+{
+    old_sw_l = sw_l;
+    old_sw_r = sw_r;
+    sw_l = reg_mprj_datal & (1 << SW_L);
+    sw_r = reg_mprj_datal & (1 << SW_R);
+    reg_gpio_out = sw_l || sw_r;
+}
+
+// APA102 datasheet: https://cdn-shop.adafruit.com/product-files/2477/APA102C-iPixelLED.pdf
 // takes 12ms to do a chain of 12 LEDs executing out of RAM
 // clock period = 23us
 void update_chain()
@@ -91,13 +105,16 @@ void update_chain()
     const unsigned char *bytePtr = &LEDS;
     bool bit;
     int i, j;
-    // start frame all 0s
+    // start frame: 32 bits of 0
     for(j = 0; j < 32; j ++)
     {
         reg_mprj_datal = (0 << DAT) + (1 << CLK);
         reg_mprj_datal = (0 << DAT);
     }
 
+    // PWM data. datasheet is wrong regarding colour order.
+    // Each LED has 4 bytes, [111,5 bits global brightness][8 bits red][8 bits blue][8 bits green]
+    // We have pointer to memory of first LED, so just need to clock out each byte MSB first
     for(i = 0; i < (NUM_LEDS)*4; i ++)
     {
         for(j = 0; j < 8; j ++)
@@ -108,13 +125,19 @@ void update_chain()
         }
     }
 
-    // end frame all 1s
+    // end frame: 32 bits of 1
     for(j = 0; j < 32; j ++)
     {
         reg_mprj_datal = (1 << DAT) + (1 << CLK);
         reg_mprj_datal = (1 << DAT);
     }
 }
+
+/*
+IMPORTANT!!
+Do not add any code here. update_chain function gets copied to flash and the pointer math relies on there being no functions
+defined between update_chain() and main()
+*/
 
 void main()
 {
@@ -146,20 +169,67 @@ void main()
     
     int i = 0;
     int step = 1;
+    int mode = 0;
+    uint8_t cycle = 0;
     while(true)
     {
-        // run update_chain from ram
+        // run update_chain from RAM for speed
         ((void(*)())func)();
-        // animation
-        for(i = 0; i < NUM_LEDS; i ++)
-            LEDS[i].green += step;
 
-        if(LEDS[0].green > MAX)
-            step = -1;
-        if(LEDS[0].green < MIN)
-            step = +1;
+        // check switches and change modes
+        check_switches();
+        if(sw_l && !old_sw_l)
+        {
+            mode ++;
+            if(mode == 4)
+                mode = 0;
+        }
 
-//        reg_gpio_out = step == -1 ? 1 : 0 ; //! reg_gpio_out; 
+        // handle the different modes
+        switch(mode) {
 
+            case 0:
+                // green fade animation
+                for(i = 0; i < NUM_LEDS; i ++)
+                {
+                    LEDS[i].green += step;
+                    LEDS[i].red = 0;
+                    LEDS[i].blue = 0;
+                }
+
+                if(LEDS[0].green > MAX)
+                    step = -1;
+                if(LEDS[0].green < MIN)
+                    step = +1;
+            break;
+
+            case 1:
+                for(i = 0; i < NUM_LEDS; i ++)
+                {
+                    LEDS[i].green = 0;
+                    if(sw_r)
+                        LEDS[i].red ++;
+                }
+            break;
+
+            case 2:
+                for(i = 0; i < NUM_LEDS; i ++)
+                {
+                    if(sw_r)
+                        LEDS[i].green ++;
+                }
+            break;
+
+            case 3:
+                for(i = 0; i < NUM_LEDS; i ++)
+                {
+                    if(sw_r)
+                        LEDS[i].blue ++;
+                }
+            break;
+
+        }
+
+        //reg_gpio_out = ! reg_gpio_out; 
     }
 }
